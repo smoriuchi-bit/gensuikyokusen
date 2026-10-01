@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>音の測定器（減衰・周波数・デシベル）</title>
+<!-- Excel(.xlsx)書き出し用。読み込めない環境ではCSVで保存します -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #E6ECEE;
+    --panel: #FBFCFB;
+    --ink: #1E2A33;
+    --sub: #5B6B76;
+    --line: #C9D3D8;
+    --level: #1F5FBF;
+    --freq: #C77700;
+    --decay: #2E7D4F;
+    --rec: #C0362C;
+    --grid: #E3E9EC;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151C21; --panel: #1E272E; --ink: #E4EAED; --sub: #93A3AD;
+      --line: #34424C; --grid: #283239;
+      --level: #6FA3F2; --freq: #F0A845; --decay: #5FC08A; --rec: #EF6A5E;
+    }
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+    margin-bottom: 18px;
+  }
+  h1 { font-size: 1.35rem; margin: 0; font-weight: 700; flex: 1 1 260px; }
+  h1 small { display: block; font-size: .8rem; color: var(--sub); font-weight: 400; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    font: inherit; font-size: .95rem; padding: 9px 16px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--sub); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--level); outline-offset: 2px; }
+  #startBtn { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 700; min-width: 140px; }
+  #startBtn.running { background: var(--rec); border-color: var(--rec); color: #fff; }
+
+  .status { display: flex; align-items: center; gap: 8px; font-size: .9rem; color: var(--sub); margin-bottom: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .running-dot { background: var(--rec); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .running-dot { animation: none; } }
+
+  .meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .meter { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--c); border-radius: 6px; padding: 12px 16px; }
+  .meter .name { font-size: .85rem; color: var(--sub); }
+  .meter .val { font-size: 2.6rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; color: var(--c); }
+  .meter .unit { font-size: 1rem; font-weight: 400; color: var(--sub); margin-left: 4px; }
+  .meter .note { font-size: .8rem; color: var(--sub); font-variant-numeric: tabular-nums; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; }
+  .panel h2 { font-size: 1rem; margin: 0 0 6px; }
+  .panel h2 span { font-weight: 400; color: var(--sub); font-size: .82rem; margin-left: 6px; }
+  canvas { display: block; width: 100%; }
+  #levelCanvas { height: 260px; }
+  #specCanvas { height: 200px; }
+
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 18px; font-size: .9rem; }
+  .settings label { display: flex; flex-direction: column; gap: 4px; color: var(--sub); }
+  select, input[type=number] {
+    font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 6px 8px; max-width: 100%;
+  }
+
+  .tablebox { max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  th, td { padding: 5px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--sub); font-weight: 600; }
+  .rowinfo { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .msg { font-size: .85rem; color: var(--rec); min-height: 1.4em; }
+  .help { font-size: .82rem; color: var(--sub); max-width: 75ch; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>音の測定器<small>デシベル・周波数・減衰曲線を同時に記録します</small></h1>
+    <div class="controls">
+      <button id="startBtn">スタート</button>
+      <button id="xlsxBtn" disabled>Excelに保存</button>
+      <button id="csvBtn" disabled>CSVに保存</button>
+      <button id="copyBtn" disabled>表をコピー</button>
+      <button id="clearBtn" disabled>記録を消去</button>
+    </div>
+  </header>
+
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">停止中：スタートを押すとマイクで測定と記録を始めます</span></div>
+  <div class="msg" id="msg" role="status"></div>
+
+  <section class="meters">
+    <div class="meter" style="--c: var(--level)">
+      <div class="name">音の大きさ</div>
+      <div class="val"><span id="dbVal">--</span><span class="unit">dB</span></div>
+      <div class="note">最大 <span id="dbMax">--</span> dB</div>
+    </div>
+    <div class="meter" style="--c: var(--freq)">
+      <div class="name">周波数（いちばん強い音の高さ）</div>
+      <div class="val"><span id="hzVal">--</span><span class="unit">Hz</span></div>
+      <div class="note">音名 <span id="noteVal">--</span></div>
+    </div>
+    <div class="meter" style="--c: var(--decay)">
+      <div class="name">減衰の速さ</div>
+      <div class="val"><span id="slopeVal">--</span><span class="unit">dB/s</span></div>
+      <div class="note">直近の残響時間（RT60推定） <span id="rtVal">--</span> 秒</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>減衰曲線<span>音の大きさの時間変化（直近10秒）。緑の破線は最後に検出した減衰の近似直線</span></h2>
+    <canvas id="levelCanvas"></canvas>
+  </section>
+
+  <section class="panel">
+    <h2>周波数スペクトル<span>どの高さの音がどれだけ含まれているか</span></h2>
+    <canvas id="specCanvas"></canvas>
+  </section>
+
+  <section class="panel">
+    <h2>設定</h2>
+    <div class="settings">
+      <label>記録の間隔
+        <select id="interval">
+          <option value="20">0.02秒ごと</option>
+          <option value="50" selected>0.05秒ごと</option>
+          <option value="100">0.1秒ごと</option>
+          <option value="250">0.25秒ごと</option>
+          <option value="500">0.5秒ごと</option>
+          <option value="1000">1秒ごと</option>
+        </select>
+      </label>
+      <label>校正値（dB）
+        <input type="number" id="calib" value="100" step="0.5">
+      </label>
+      <label>周波数を測る範囲
+        <select id="fRange">
+          <option value="50-5000">50〜5,000 Hz（楽器・声）</option>
+          <option value="20-20000" selected>20〜20,000 Hz（全域）</option>
+          <option value="100-2000">100〜2,000 Hz（音叉など）</option>
+        </select>
+      </label>
+    </div>
+    <p class="help">スマホの騒音計アプリや学校の騒音計と同じ音を測り、表示が同じになるように校正値を調整すると、値が実際のdBに近づきます。校正しない場合は、相対的な比較（大きくなった・小さくなった）に使ってください。</p>
+  </section>
+
+  <section class="panel">
+    <div class="rowinfo">
+      <h2 style="margin:0">記録データ<span id="rowCount">0件</span></h2>
+      <span class="help">表示は新しい順に最大100件。保存するとすべて書き出されます。</span>
+    </div>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>経過時間(s)</th><th>音の大きさ(dB)</th><th>周波数(Hz)</th><th>減衰の速さ(dB/s)</th><th>残響時間RT60(s)</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const ANALYSIS_MS = 20;          // 解析は常に0.02秒ごと（減衰を細かくとらえるため）
+  const WINDOW_S = 10;             // グラフの表示幅
+  const SLOPE_WIN_S = 0.3;         // 減衰の速さを求める区間
+  const DB_MIN = 20, DB_MAX = 120; // グラフの縦軸
+
+  let ctx, stream, levelAn, freqAn, timeBuf, freqBuf;
+  let running = false, t0 = 0, timer = null, raf = null, lastRowT = -Infinity;
+  let rows = [], hist = [], maxDb = -Infinity;
+  let cur = { db: null, hz: null, slope: null };
+  let lastRT = null, lastFit = null;
+  let det = { peak: -Infinity, peakT: 0, pts: [], collecting: false };
+
+  // ---------- 計算 ----------
+  function linReg(pts) {
+    const n = pts.length; if (n < 3) return null;
+    let mt = 0, my = 0; for (const [t, y] of pts) { mt += t; my += y; } mt /= n; my /= n;
+    let num = 0, den = 0; for (const [t, y] of pts) { num += (t - mt) * (y - my); den += (t - mt) ** 2; }
+    if (den === 0) return null;
+    const s = num / den; return { s, b: my - s * mt };
+  }
+
+  function measureLevel() {
+    levelAn.getFloatTimeDomainData(timeBuf);
+    let sum = 0; for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+    const rms = Math.sqrt(sum / timeBuf.length);
+    const dbfs = 20 * Math.log10(Math.max(rms, 1e-9));
+    return dbfs + Number($('calib').value || 0);
+  }
+
+  function measureFreq() {
+    freqAn.getFloatFrequencyData(freqBuf);
+    const [lo, hi] = $('fRange').value.split('-').map(Number);
+    const binHz = ctx.sampleRate / freqAn.fftSize;
+    const i0 = Math.max(1, Math.floor(lo / binHz));
+    const i1 = Math.min(freqBuf.length - 2, Math.ceil(hi / binHz));
+    let best = i0;
+    for (let i = i0; i <= i1; i++) if (freqBuf[i] > freqBuf[best]) best = i;
+    if (freqBuf[best] < -85) return null; // 音が小さすぎるときは測らない
+    // 放物線補間で細かい周波数を求める
+    const a = freqBuf[best - 1], b = freqBuf[best], c = freqBuf[best + 1];
+    const d = (a - 2 * b + c) !== 0 ? 0.5 * (a - c) / (a - 2 * b + c) : 0;
+    return (best + d) * binHz;
+  }
+
+  function resetDet(t, db) { det = { peak: db, peakT: t, pts: [], collecting: false }; }
+
+  // 音が鳴って止んだときの減衰（ピークから-5dB〜-25dB）を直線で近似し、RT60を推定
+  function detectDecay(t, db) {
+    if (db > det.peak) { resetDet(t, db); return; }
+    const drop = det.peak - db;
+    if (det.collecting && det.pts.length && db > det.pts[det.pts.length - 1][1] + 6) { resetDet(t, db); return; }
+    if (drop >= 5) { det.collecting = true; det.pts.push([t, db]); }
+    const range = det.pts.length ? det.pts[0][1] - det.pts[det.pts.length - 1][1] : 0;
+    if (det.collecting && drop >= 25) finishDecay(t, db);
+    else if (t - det.peakT > 4) { if (range >= 10) finishDecay(t, db); else resetDet(t, db); }
+  }
+  function finishDecay(t, db) {
+    const r = linReg(det.pts);
+    if (r && r.s < 0) {
+      lastRT = -60 / r.s;
+      lastFit = { t0: det.pts[0][0], t1: det.pts[det.pts.length - 1][0], s: r.s, b: r.b };
+    }
+    resetDet(t, db);
+  }
+
+  function noteName(hz) {
+    if (!hz) return '--';
+    const names = ['ド','ド#','レ','レ#','ミ','ファ','ファ#','ソ','ソ#','ラ','ラ#','シ'];
+    const n = Math.round(12 * Math.log2(hz / 440)) + 57;
+    return names[((n % 12) + 12) % 12] + Math.floor(n / 12);
+  }
+
+  // ---------- 解析ループ ----------
+  function tick() {
+    const t = (performance.now() - t0) / 1000;
+    const db = measureLevel();
+    const hz = measureFreq();
+    hist.push([t, db]);
+    while (hist.length && hist[0][0] < t - WINDOW_S - 1) hist.shift();
+
+    const recent = [];
+    for (let i = hist.length - 1; i >= 0 && hist[i][0] >= t - SLOPE_WIN_S; i--) recent.push(hist[i]);
+    const r = linReg(recent);
+    cur = { db, hz, slope: r ? r.s : null };
+    if (db > maxDb) maxDb = db;
+    detectDecay(t, db);
+
+    const interval = Number($('interval').value);
+    if ((t - lastRowT) * 1000 >= interval - 1) {
+      lastRowT = t;
+      const row = [
+        +t.toFixed(3),
+        +db.toFixed(1),
+        hz ? +hz.toFixed(1) : '',
+        r ? +r.s.toFixed(1) : '',
+        lastRT ? +lastRT.toFixed(2) : ''
+      ];
+      rows.push(row);
+      addRow(row);
+    }
+  }
+
+  function addRow(row) {
+    const tr = document.createElement('tr');
+    for (const v of row) { const td = document.createElement('td'); td.textContent = v === '' ? '-' : v; tr.appendChild(td); }
+    const tb = $('tbody');
+    tb.insertBefore(tr, tb.firstChild);
+    while (tb.children.length > 100) tb.removeChild(tb.lastChild);
+    $('rowCount').textContent = rows.length.toLocaleString() + '件';
+  }
+
+  // ---------- 描画 ----------
+  function fitCanvas(cv) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    }
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { g, w, h };
+  }
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawLevel() {
+    const { g, w, h } = fitCanvas($('levelCanvas'));
+    const L = 44, R = 10, T = 8, B = 24, pw = w - L - R, ph = h - T - B;
+    g.clearRect(0, 0, w, h);
+    g.font = '11px system-ui, sans-serif'; g.fillStyle = css('--sub'); g.strokeStyle = css('--grid'); g.lineWidth = 1;
+    const tNow = hist.length ? hist[hist.length - 1][0] : 0;
+    const tStart = Math.max(0, tNow - WINDOW_S);
+    const x = t => L + (t - tStart) / WINDOW_S * pw;
+    const y = d => T + (1 - (Math.min(Math.max(d, DB_MIN), DB_MAX) - DB_MIN) / (DB_MAX - DB_MIN)) * ph;
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let d = DB_MIN; d <= DB_MAX; d += 20) {
+      g.beginPath(); g.moveTo(L, y(d)); g.lineTo(L + pw, y(d)); g.stroke();
+      g.fillText(d + ' dB', L - 4, y(d));
+    }
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    for (let s = Math.ceil(tStart); s <= tStart + WINDOW_S; s++) {
+      g.beginPath(); g.moveTo(x(s), T); g.lineTo(x(s), T + ph); g.stroke();
+      g.fillText(s + 's', x(s), T + ph + 5);
+    }
+    g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+    if (hist.length > 1) {
+      g.strokeStyle = css('--level'); g.lineWidth = 2; g.lineJoin = 'round'; g.beginPath();
+      let first = true;
+      for (const [t, d] of hist) { if (t < tStart) continue; first ? g.moveTo(x(t), y(d)) : g.lineTo(x(t), y(d)); first = false; }
+      g.stroke();
+    }
+    if (lastFit && lastFit.t1 >= tStart) {
+      g.strokeStyle = css('--decay'); g.lineWidth = 2.5; g.setLineDash([6, 4]); g.beginPath();
+      g.moveTo(x(lastFit.t0), y(lastFit.s * lastFit.t0 + lastFit.b));
+      g.lineTo(x(lastFit.t1), y(lastFit.s * lastFit.t1 + lastFit.b));
+      g.stroke(); g.setLineDash([]);
+    }
+    g.restore();
+  }
+
+  function drawSpec() {
+    const { g, w, h } = fitCanvas($('specCanvas'));
+    const L = 44, R = 10, T = 8, B = 24, pw = w - L - R, ph = h - T - B;
+    const FMIN = 20, FMAX = 20000, AMIN = -110, AMAX = -10;
+    g.clearRect(0, 0, w, h);
+    g.font = '11px system-ui, sans-serif'; g.fillStyle = css('--sub'); g.strokeStyle = css('--grid'); g.lineWidth = 1;
+    const x = f => L + Math.log10(f / FMIN) / Math.log10(FMAX / FMIN) * pw;
+    const y = a => T + (1 - (Math.min(Math.max(a, AMIN), AMAX) - AMIN) / (AMAX - AMIN)) * ph;
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    for (const f of [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]) {
+      g.beginPath(); g.moveTo(x(f), T); g.lineTo(x(f), T + ph); g.stroke();
+      g.fillText(f >= 1000 ? f / 1000 + 'k' : f, x(f), T + ph + 5);
+    }
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let a = AMIN + 10; a <= AMAX; a += 20) {
+      g.beginPath(); g.moveTo(L, y(a)); g.lineTo(L + pw, y(a)); g.stroke();
+      g.fillText(a, L - 4, y(a));
+    }
+    if (!running || !freqBuf) return;
+    const binHz = ctx.sampleRate / freqAn.fftSize;
+    g.strokeStyle = css('--freq'); g.lineWidth = 1.5; g.beginPath();
+    let first = true;
+    for (let i = 1; i < freqBuf.length; i++) {
+      const f = i * binHz; if (f < FMIN) continue; if (f > FMAX) break;
+      first ? g.moveTo(x(f), y(freqBuf[i])) : g.lineTo(x(f), y(freqBuf[i])); first = false;
+    }
+    g.stroke();
+    if (cur.hz) {
+      g.strokeStyle = css('--freq'); g.setLineDash([3, 3]); g.beginPath();
+      g.moveTo(x(cur.hz), T); g.lineTo(x(cur.hz), T + ph); g.stroke(); g.setLineDash([]);
+    }
+  }
+
+  function render() {
+    if (running) {
+      $('dbVal').textContent = cur.db != null ? cur.db.toFixed(1) : '--';
+      $('dbMax').textContent = isFinite(maxDb) ? maxDb.toFixed(1) : '--';
+      $('hzVal').textContent = cur.hz ? cur.hz.toFixed(cur.hz < 1000 ? 1 : 0) : '--';
+      $('noteVal').textContent = noteName(cur.hz);
+      $('slopeVal').textContent = cur.slope != null ? cur.slope.toFixed(0) : '--';
+      $('rtVal').textContent = lastRT ? lastRT.toFixed(2) : '--';
+    }
+    drawLevel(); drawSpec();
+    raf = running ? requestAnimationFrame(render) : null;
+  }
+
+  // ---------- 開始・停止 ----------
+  async function start() {
+    $('msg').textContent = '';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+    } catch (e) {
+      $('msg').textContent = 'マイクを使えません。ブラウザのマイク許可を確認してください（学校の設定で禁止されている場合もあります）。';
+      return;
+    }
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream);
+    levelAn = ctx.createAnalyser(); levelAn.fftSize = 1024; levelAn.smoothingTimeConstant = 0;
+    freqAn = ctx.createAnalyser(); freqAn.fftSize = 8192; freqAn.smoothingTimeConstant = 0.2;
+    src.connect(levelAn); src.connect(freqAn);
+    timeBuf = new Float32Array(levelAn.fftSize);
+    freqBuf = new Float32Array(freqAn.frequencyBinCount);
+
+    // 前回の記録の続きから時間を数える
+    const offset = rows.length ? rows[rows.length - 1][0] + 0.001 : 0;
+    t0 = performance.now() - offset * 1000;
+    lastRowT = -Infinity; hist = []; resetDet(offset, -Infinity);
+    running = true;
+    timer = setInterval(tick, ANALYSIS_MS);
+    $('startBtn').textContent = 'ストップ'; $('startBtn').classList.add('running');
+    $('dot').classList.add('running-dot');
+    $('statusText').textContent = '記録中：' + (ctx.sampleRate / 1000) + ' kHzで測定しています';
+    updateButtons();
+    render();
+  }
+
+  function stop() {
+    running = false;
+    clearInterval(timer);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (ctx) ctx.close();
+    $('startBtn').textContent = 'スタート'; $('startBtn').classList.remove('running');
+    $('dot').classList.remove('running-dot');
+    $('statusText').textContent = '停止中：' + rows.length.toLocaleString() + '件を記録しました。もう一度スタートすると続きから記録します';
+    updateButtons();
+  }
+
+  function updateButtons() {
+    const has = rows.length > 0;
+    $('csvBtn').disabled = !has; $('copyBtn').disabled = !has;
+    $('xlsxBtn').disabled = !has; $('clearBtn').disabled = !has || running;
+  }
+
+  // ---------- 書き出し ----------
+  const HEAD = ['経過時間(s)', '音の大きさ(dB)', '周波数(Hz)', '減衰の速さ(dB/s)', '残響時間RT60(s)'];
+  function stamp() {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+  function download(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function saveCSV() {
+    const text = [HEAD, ...rows].map(r => r.join(',')).join('\r\n');
+    download(new Blob(['\uFEFF' + text], { type: 'text/csv' }), `音の測定_${stamp()}.csv`);
+  }
+  function saveXLSX() {
+    if (!window.XLSX) { $('msg').textContent = 'Excel形式の部品を読み込めなかったため、CSVで保存しました（CSVもExcelで開けます）。'; saveCSV(); return; }
+    const ws = XLSX.utils.aoa_to_sheet([HEAD, ...rows]);
+    ws['!cols'] = HEAD.map(() => ({ wch: 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '測定データ');
+    XLSX.writeFile(wb, `音の測定_${stamp()}.xlsx`);
+  }
+  async function copyTable() {
+    const text = [HEAD, ...rows].map(r => r.join('\t')).join('\n');
+    try { await navigator.clipboard.writeText(text); $('msg').textContent = ''; $('statusText').textContent = 'コピーしました。スプレッドシートやExcelに貼り付けられます'; }
+    catch { $('msg').textContent = 'コピーできませんでした。CSVに保存を使ってください。'; }
+  }
+
+  $('startBtn').addEventListener('click', () => running ? stop() : start());
+  $('csvBtn').addEventListener('click', saveCSV);
+  $('xlsxBtn').addEventListener('click', saveXLSX);
+  $('copyBtn').addEventListener('click', copyTable);
+  $('clearBtn').addEventListener('click', () => {
+    if (!confirm('記録したデータをすべて消去しますか？')) return;
+    rows = []; hist = []; maxDb = -Infinity; lastRT = null; lastFit = null;
+    $('tbody').innerHTML = ''; $('rowCount').textContent = '0件';
+    ['dbVal','dbMax','hzVal','noteVal','slopeVal','rtVal'].forEach(id => $(id).textContent = '--');
+    $('statusText').textContent = '停止中：スタートを押すとマイクで測定と記録を始めます';
+    updateButtons(); render();
+  });
+  window.addEventListener('resize', () => { if (!running) render(); });
+  render();
+})();
+</script>
+</body>
+</html>
